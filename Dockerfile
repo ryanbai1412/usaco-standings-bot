@@ -28,8 +28,6 @@ RUN apt-get update \
 
 WORKDIR /app
 COPY --from=builder /usr/local/bin/usaco-standings-bot /app/usaco-standings-bot
-# Seed dataset; the live DB lives at $FILE_STORE_PATH (mount a persistent volume).
-COPY data-12-24.json /app/data-12-24.json
 
 # This bot has no web process. Dokku reads this Procfile from the image; scale it
 # with `dokku ps:scale <app> bot=1`.

@@ -43,11 +43,13 @@ dokku registry:login ghcr.io <github-username> <github-personal-access-token>
 ```sh
 dokku apps:create usaco-standings-bot
 
-# Secrets / config (the app reads these at runtime)
-dokku config:set usaco-standings-bot DISCORD_TOKEN=xxxxx FILE_STORE_PATH=/store/db.json
-
-# Persistent storage for the file store (survives redeploys)
+# Persistent storage for the file store (survives redeploys). FILE_STORE_PATH is
+# a DIRECTORY — the app reads/writes usaco-db.json and stats.json inside it.
+dokku storage:ensure-directory usaco-standings-bot
 dokku storage:mount usaco-standings-bot /var/lib/dokku/data/storage/usaco-standings-bot:/store
+
+# Secrets / config (the app reads these at runtime)
+dokku config:set usaco-standings-bot DISCORD_TOKEN=xxxxx FILE_STORE_PATH=/store
 
 # This is a worker-only bot with no web process. Disable the zero-downtime
 # port check so deploys aren't marked failed for not listening on a port.
@@ -55,8 +57,13 @@ dokku checks:disable usaco-standings-bot
 dokku ports:clear usaco-standings-bot 2>/dev/null || true
 ```
 
-To seed the database, copy `data-12-24.json` onto the mounted volume as your
-`FILE_STORE_PATH` (or just run `@bot update` once the bot is online).
+The store starts empty. Populate it either way:
+- Run `@bot update` once the bot is online (scrapes fresh data into the store), or
+- Seed from the committed snapshot by dropping it into the mounted directory as
+  `usaco-db.json`:
+  ```sh
+  cp data-12-24.json /var/lib/dokku/data/storage/usaco-standings-bot/usaco-db.json
+  ```
 
 ## Local build fallback
 
@@ -79,8 +86,9 @@ SSH_HOST=root@your-vps REGISTRY=ghcr.io/ryanbai1412 ./deploy/deploy.sh  # via re
 
 ## Notes
 
-- The image bakes in `data-12-24.json` at `/app/data-12-24.json` as a seed; the
-  live database is whatever `FILE_STORE_PATH` points at on the mounted volume.
+- `FILE_STORE_PATH` is a directory; the live database is `usaco-db.json` (plus
+  `stats.json`) inside it, on the mounted persistent volume. The image does not
+  bundle any data.
 - `SSH_HOST` for the local fallback must be able to run both `docker load` and
   `dokku`. If your setup separates these (restricted `dokku` user vs a root/docker
   user), split the last steps of `deploy/deploy.sh` across the two SSH targets.
