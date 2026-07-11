@@ -1,94 +1,51 @@
-# Deploying to Dokku (build in CI, not on the VPS)
+# Deploying
 
-The bot used to deploy via a Heroku-style buildpack (`Procfile` + `git push dokku`),
-which compiles the whole Rust project **on the VPS** — slow and resource-hungry.
+The bot runs on [Dokku](https://dokku.com/) as a prebuilt Docker image. CI builds
+the image; you release it with one command. Nothing compiles on the server.
 
-Instead, GitHub Actions builds a Docker image and hands Dokku the **prebuilt
-image**, so the VPS never compiles anything.
+## Deploying a new version
 
-## How it works
+1. Merge to `main` (or open a PR). GitHub Actions builds the image and pushes it to
+   `ghcr.io/ryanbai1412/usaco-standings-bot:<commit-sha>`.
+2. Open the **Docker image** workflow run → job summary, and run the release
+   command it prints (fill in your host):
 
-- **`.github/workflows/ci.yml`** — runs on every push to `main` and every PR:
-  `rustfmt` (nightly), `clippy -D warnings`, and `cargo test`, with Rust caching.
-- **`.github/workflows/docker.yml`** — runs on every push to `main` and every PR:
-  builds the `Dockerfile` and (for non-fork builds) pushes it to GHCR as
-  `ghcr.io/ryanbai1412/usaco-standings-bot:<commit-sha>` (plus `:latest` on `main`).
-  The job summary prints a ready-to-run **release command** for that exact image.
+   ```sh
+   ssh <dokku-host> "dokku git:from-image usaco-standings-bot ghcr.io/ryanbai1412/usaco-standings-bot:<sha> && dokku ps:scale usaco-standings-bot bot=1"
+   ```
 
-Nothing compiles on the VPS or your laptop.
+The command pins the commit SHA, so you deploy exactly that build — and rolling
+back is the same command with an older SHA.
 
-## Releasing a build to Dokku
-
-After a build finishes, open the `Docker image` workflow run → job summary. It shows:
-
-```sh
-ssh <your-dokku-host> "dokku git:from-image usaco-standings-bot ghcr.io/ryanbai1412/usaco-standings-bot:<sha> && dokku ps:scale usaco-standings-bot bot=1"
-```
-
-Copy it (fill in your host) and run it. Because it pins the commit SHA, you deploy
-exactly the image you reviewed, and rolling back is just re-running the command
-with an older SHA.
-
-If the GHCR package is **private**, the VPS needs to authenticate once so Dokku
-can pull it:
-
-```sh
-dokku registry:login ghcr.io <github-username> <github-personal-access-token>
-```
-
-(or make the package public in GitHub → Packages settings).
-
-## One-time Dokku setup (on the VPS)
+## First-time setup (once, on the VPS)
 
 ```sh
 dokku apps:create usaco-standings-bot
 
-# Persistent storage for the file store (survives redeploys). FILE_STORE_PATH is
-# a DIRECTORY — the app reads/writes usaco-db.json and stats.json inside it.
+# Persistent DB storage. FILE_STORE_PATH is a DIRECTORY; the app stores
+# usaco-db.json and stats.json inside it.
 dokku storage:ensure-directory usaco-standings-bot
 dokku storage:mount usaco-standings-bot /var/lib/dokku/data/storage/usaco-standings-bot:/store
-
-# Secrets / config (the app reads these at runtime)
 dokku config:set usaco-standings-bot DISCORD_TOKEN=xxxxx FILE_STORE_PATH=/store
 
-# This is a worker-only bot with no web process. Disable the zero-downtime
-# port check so deploys aren't marked failed for not listening on a port.
+# Worker-only bot (no web server): skip the port check.
 dokku checks:disable usaco-standings-bot
-dokku ports:clear usaco-standings-bot 2>/dev/null || true
+
+# If the GHCR package is private, let Dokku pull it:
+dokku registry:login ghcr.io <github-username> <github-token>
 ```
 
-The store starts empty. Populate it either way:
-- Run `@bot update` once the bot is online (scrapes fresh data into the store), or
-- Seed from the committed snapshot by dropping it into the mounted directory as
-  `usaco-db.json`:
-  ```sh
-  cp data-12-24.json /var/lib/dokku/data/storage/usaco-standings-bot/usaco-db.json
-  ```
+The DB starts empty — run `@bot update` once the bot is online to populate it.
 
-## Local build fallback
-
-If you ever need to build and ship without CI (e.g. GHCR is down), `deploy/deploy.sh`
-builds the image locally and deploys it — either registry-less
-(`docker save | ssh docker load`) or via a registry:
+## Running locally
 
 ```sh
-SSH_HOST=root@your-vps ./deploy/deploy.sh                          # registry-less
-SSH_HOST=root@your-vps REGISTRY=ghcr.io/ryanbai1412 ./deploy/deploy.sh  # via registry
+export DISCORD_TOKEN=... FILE_STORE_PATH=./store
+mkdir -p "$FILE_STORE_PATH"
+cargo run
 ```
 
-| Variable         | Default                        | Meaning                                                       |
-| ---------------- | ------------------------------ | ------------------------------------------------------------ |
-| `SSH_HOST`       | (required)                     | SSH target with `docker` + `dokku` access, e.g. `root@vps`   |
-| `DOKKU_APP`      | `usaco-standings-bot`          | Dokku app name                                               |
-| `IMAGE_TAG`      | `usaco-standings-bot:latest`   | Local image tag                                              |
-| `REGISTRY`       | (unset → registry-less)        | Registry host/namespace to push to, e.g. `ghcr.io/ryanbai1412` |
-| `REGISTRY_IMAGE` | `$REGISTRY/$IMAGE_TAG`          | Full image ref Dokku deploys from                           |
+## Building without CI
 
-## Notes
-
-- `FILE_STORE_PATH` is a directory; the live database is `usaco-db.json` (plus
-  `stats.json`) inside it, on the mounted persistent volume. The image does not
-  bundle any data.
-- `SSH_HOST` for the local fallback must be able to run both `docker load` and
-  `dokku`. If your setup separates these (restricted `dokku` user vs a root/docker
-  user), split the last steps of `deploy/deploy.sh` across the two SSH targets.
+`./deploy/deploy.sh` builds the image locally and deploys it (registry-less by
+default). See the variables documented at the top of that script.
