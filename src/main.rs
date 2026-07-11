@@ -311,7 +311,7 @@ async fn search(
 
         if name.to_lowercase().starts_with("name") {
             embed = embed.footer(CreateEmbedFooter::new(
-                r#"hint: this command was recently refactored. perhaps you wanted to do s;search <name>, for example "s;search benjamin qi". alternatively, use /search"#,
+                r#"hint: just provide the name to look up, for example "/search benjamin qi", or mention the bot with "search benjamin qi""#,
             ));
         }
 
