@@ -1,0 +1,16 @@
+# Build artifacts (rebuilt inside the image)
+target/
+usaco-standings-scraper/target/
+
+# Local runtime / secrets — never ship these into the image
+.envrc
+.env
+store/
+
+# VCS and editor cruft
+.git/
+.github/
+.idea/
+.vscode/
+*.swp
+.DS_Store
