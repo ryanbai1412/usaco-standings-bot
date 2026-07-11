@@ -304,19 +304,23 @@ async fn search(
 
     // max length of embed description is 4096
     if res.len() <= 4000 {
-        let mut embed = CreateEmbed::new()
+        let embed = CreateEmbed::new()
             .title("USACO Standings Search Result")
             .color(Color::BLUE)
             .description(format!("```{res}```",));
 
+        let mut reply = CreateReply::default().embed(embed).ephemeral(private);
+
+        // Mentions and code formatting don't render in an embed footer, so the
+        // hint lives in the message content instead.
         if name.to_lowercase().starts_with("name") {
-            embed = embed.footer(CreateEmbedFooter::new(
-                r#"hint: just provide the name to look up, for example "/search benjamin qi", or mention the bot with "search benjamin qi""#,
+            reply = reply.content(format!(
+                "hint: just provide the name to look up, for example `/search benjamin qi`, or ping me: <@{}> `search benjamin qi`",
+                ctx.framework().bot_id
             ));
         }
 
-        ctx.send(CreateReply::default().embed(embed).ephemeral(private))
-            .await?;
+        ctx.send(reply).await?;
     } else {
         ctx.send(
             CreateReply::default()
