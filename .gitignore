@@ -1,0 +1,19 @@
+# Rust build artifacts
+/target
+/usaco-standings-scraper/target
+
+# Environment / secrets (contains DISCORD_TOKEN)
+.envrc
+.env
+
+# Bot runtime file store (FILE_STORE_PATH)
+/store
+
+# Backtrace / debug artifacts
+*.pdb
+
+# Editor / OS cruft
+.idea/
+.vscode/
+*.swp
+.DS_Store
