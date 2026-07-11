@@ -1,25 +1,33 @@
 # syntax=docker/dockerfile:1
 
-# ---- Build stage: compile the release binary ----
-FROM rust:1-bookworm AS builder
+# ---- Base with cargo-chef, used to plan and cook the dependency graph ----
+FROM rust:1-bookworm AS chef
+RUN cargo install cargo-chef --locked
+WORKDIR /app
+
+# ---- Plan: capture just the dependency graph (invalidated only by Cargo.* ) ----
+FROM chef AS planner
+COPY . .
+RUN cargo chef prepare --recipe-path recipe.json
+
+# ---- Build: cook deps (cached), then compile our code ----
+FROM chef AS builder
 
 # openssl-sys (pulled in transitively) needs these at build time.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends pkg-config libssl-dev \
     && rm -rf /var/lib/apt/lists/*
 
-WORKDIR /app
+# Cook dependencies. This layer is cached and only rebuilds when the dependency
+# graph in recipe.json changes, so source-only edits skip recompiling all deps.
+COPY --from=planner /app/recipe.json recipe.json
+RUN cargo chef cook --release --recipe-path recipe.json
+
+# Now build the actual binary; only our workspace crates recompile here.
 COPY . .
+RUN cargo build --release --bin usaco-standings-bot
 
-# BuildKit cache mounts keep the cargo registry and target dir warm across
-# builds, so incremental rebuilds are fast. The binary is copied out of the
-# (cache-mounted) target dir within the same layer so it survives.
-RUN --mount=type=cache,target=/usr/local/cargo/registry \
-    --mount=type=cache,target=/app/target \
-    cargo build --release --bin usaco-standings-bot \
-    && cp target/release/usaco-standings-bot /usr/local/bin/usaco-standings-bot
-
-# ---- Runtime stage: slim image with just the binary ----
+# ---- Runtime: slim image with just the binary ----
 FROM debian:bookworm-slim
 
 RUN apt-get update \
@@ -27,7 +35,7 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
-COPY --from=builder /usr/local/bin/usaco-standings-bot /app/usaco-standings-bot
+COPY --from=builder /app/target/release/usaco-standings-bot /app/usaco-standings-bot
 
 # This bot has no web process. Dokku reads this Procfile from the image; scale it
 # with `dokku ps:scale <app> bot=1`.
