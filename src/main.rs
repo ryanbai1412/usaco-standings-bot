@@ -165,6 +165,41 @@ struct AppData {
 
 type Context<'a> = poise::Context<'a, AppData, anyhow::Error>;
 
+/// Builds the deprecation warning embed shown for `s;` invocations. `bot_id` is
+/// used to render an actual bot ping in the "mention the bot" example.
+fn deprecation_embed(bot_id: serenity::UserId) -> CreateEmbed {
+    CreateEmbed::new()
+        .title("`s;` commands are deprecated")
+        .color(Color::ORANGE)
+        .description(format!(
+            "Prefix (`s;`) commands are being deprecated.\n\n\
+             Please use one of the following instead:\n\
+             - **Slash Commands**: type `/` and pick a command (e.g. `/search benjamin qi`).\n\
+             - **Mention the bot**: <@{bot_id}> search benjamin qi",
+        ))
+}
+
+/// Returns whether a matched prefix is a bot mention (a ping) rather than the
+/// deprecated `s;` text prefix. Mentions look like `<@ID>` or `<@!ID>`.
+fn is_mention_prefix(prefix: &str) -> bool {
+    prefix.trim_start().starts_with("<@")
+}
+
+/// Global command check that intercepts commands invoked via the deprecated
+/// `s;` text prefix, replying with a warning instead of running them. Mention
+/// and slash command invocations are unaffected.
+async fn deprecation_check(ctx: Context<'_>) -> anyhow::Result<bool> {
+    if let Context::Prefix(pref) = ctx {
+        if !is_mention_prefix(pref.prefix) {
+            ctx.send(CreateReply::default().embed(deprecation_embed(ctx.framework().bot_id)))
+                .await?;
+            return Ok(false);
+        }
+    }
+
+    Ok(true)
+}
+
 /// Shows this help menu
 #[poise::command(prefix_command, slash_command)]
 async fn help(
@@ -276,7 +311,7 @@ async fn search(
 
         if name.to_lowercase().starts_with("name") {
             embed = embed.footer(CreateEmbedFooter::new(
-                r#"hint: this command was recently refactored. perhaps you wanted to do s;search <name>, for example "s;search benjamin qi". alternatively, use /search"#,
+                r#"hint: just provide the name to look up, for example "/search benjamin qi", or mention the bot with "search benjamin qi""#,
             ));
         }
 
@@ -516,14 +551,34 @@ async fn main() -> anyhow::Result<()> {
             ..Default::default()
         },
         allowed_mentions: Some(CreateAllowedMentions::new().empty_users().empty_roles()),
+        command_check: Some(|ctx| Box::pin(deprecation_check(ctx))),
         on_error: |err: FrameworkError<'_, _, anyhow::Error>| {
             Box::pin(async {
                 if let Err(e) = match err {
-                    FrameworkError::UnknownCommand { ctx, msg, .. } => {
-                        msg.channel_id.say(
-                            &ctx.http,
-                            r#"Unrecognized command. Type "s;help" to view all valid commands on how to use this bot."#,
-                        ).await.map(|_| ())
+                    // The deprecation check already replied to the user; nothing more to do.
+                    FrameworkError::CommandCheckFailed { error: None, .. } => Ok(()),
+                    FrameworkError::UnknownCommand {
+                        ctx,
+                        msg,
+                        prefix,
+                        framework,
+                        ..
+                    } => {
+                        if is_mention_prefix(prefix) {
+                            msg.channel_id.say(
+                                &ctx.http,
+                                r#"Unrecognized command. Type "/help" to view all valid commands on how to use this bot."#,
+                            ).await.map(|_| ())
+                        } else {
+                            msg.channel_id
+                                .send_message(
+                                    &ctx.http,
+                                    serenity::CreateMessage::new()
+                                        .embed(deprecation_embed(framework.bot_id)),
+                                )
+                                .await
+                                .map(|_| ())
+                        }
                     }
                     e => poise::builtins::on_error(e).await,
                 } {
@@ -541,7 +596,7 @@ async fn main() -> anyhow::Result<()> {
 
                 poise::builtins::register_globally(ctx, &framework.options().commands).await?;
 
-                ctx.set_activity(Some(ActivityData::custom("s;help for usage!")));
+                ctx.set_activity(Some(ActivityData::custom("/help for usage!")));
 
                 let data = AppData {
                     db: Box::leak(Box::new(Mutex::new(store_data.db))),
