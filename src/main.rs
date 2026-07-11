@@ -165,21 +165,18 @@ struct AppData {
 
 type Context<'a> = poise::Context<'a, AppData, anyhow::Error>;
 
-/// The user-facing notice shown when someone invokes a command via the
-/// deprecated `s;` text prefix.
-const DEPRECATION_NOTICE: &str = "Prefix (`s;`) commands are being retired because Discord is \
-    removing the Message Content privileged intent for this bot, which means it will no longer be \
-    able to read `s;` messages in servers.\n\n\
-    Please use one of these instead:\n\
-    • **Slash commands** — type `/` and pick a command (e.g. `/search benjamin qi`).\n\
-    • **Mention the bot** — `@USACO Standings Bot search benjamin qi`.";
-
-/// Builds the deprecation warning embed shown for `s;` invocations.
-fn deprecation_embed() -> CreateEmbed {
+/// Builds the deprecation warning embed shown for `s;` invocations. `bot_id` is
+/// used to render an actual bot ping in the "mention the bot" example.
+fn deprecation_embed(bot_id: serenity::UserId) -> CreateEmbed {
     CreateEmbed::new()
         .title("`s;` commands are deprecated")
         .color(Color::ORANGE)
-        .description(DEPRECATION_NOTICE)
+        .description(format!(
+            "Prefix (`s;`) commands are being deprecated.\n\n\
+             Please use one of the following instead:\n\
+             - **Slash Commands**: type `/` and pick a command (e.g. `/search benjamin qi`).\n\
+             - **Mention the bot**: <@{bot_id}> search benjamin qi",
+        ))
 }
 
 /// Returns whether a matched prefix is a bot mention (a ping) rather than the
@@ -194,7 +191,7 @@ fn is_mention_prefix(prefix: &str) -> bool {
 async fn deprecation_check(ctx: Context<'_>) -> anyhow::Result<bool> {
     if let Context::Prefix(pref) = ctx {
         if !is_mention_prefix(pref.prefix) {
-            ctx.send(CreateReply::default().embed(deprecation_embed()))
+            ctx.send(CreateReply::default().embed(deprecation_embed(ctx.framework().bot_id)))
                 .await?;
             return Ok(false);
         }
@@ -561,7 +558,11 @@ async fn main() -> anyhow::Result<()> {
                     // The deprecation check already replied to the user; nothing more to do.
                     FrameworkError::CommandCheckFailed { error: None, .. } => Ok(()),
                     FrameworkError::UnknownCommand {
-                        ctx, msg, prefix, ..
+                        ctx,
+                        msg,
+                        prefix,
+                        framework,
+                        ..
                     } => {
                         if is_mention_prefix(prefix) {
                             msg.channel_id.say(
@@ -572,7 +573,8 @@ async fn main() -> anyhow::Result<()> {
                             msg.channel_id
                                 .send_message(
                                     &ctx.http,
-                                    serenity::CreateMessage::new().embed(deprecation_embed()),
+                                    serenity::CreateMessage::new()
+                                        .embed(deprecation_embed(framework.bot_id)),
                                 )
                                 .await
                                 .map(|_| ())
